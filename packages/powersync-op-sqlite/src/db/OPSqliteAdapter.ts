@@ -12,6 +12,7 @@ import Lock from 'async-lock';
 import { OPSQLiteConnection } from './OPSQLiteConnection';
 import { NativeModules, Platform } from 'react-native';
 import { SqliteOptions } from './SqliteOptions';
+import queue from 'async/queue';
 
 /**
  * Adapter for React Native Quick SQLite
@@ -38,6 +39,8 @@ export class OPSQLiteDBAdapter extends BaseObserver<DBAdapterListener> implement
   protected readConnections: OPSQLiteConnection[] | null;
 
   protected writeConnection: OPSQLiteConnection | null;
+
+  private readQueue: any;
 
   constructor(protected options: OPSQLiteAdapterOptions) {
     super();
@@ -90,6 +93,28 @@ export class OPSQLiteDBAdapter extends BaseObserver<DBAdapterListener> implement
       await conn.execute('PRAGMA query_only = true');
       this.readConnections.push(conn);
     }
+
+    this.readQueue = queue(
+      async (
+        { connection, fn }: { connection: OPSQLiteConnection; fn: (tx: OPSQLiteConnection) => Promise<any> },
+        callback
+      ) => {
+        try {
+          // console.log('Starting fn(connection)', this.currentDate());
+          let timeOut = Math.random() * 2000;
+          console.log('Before sleep:', performance.now());
+          await this.delay(timeOut);
+          // timeout(fn(connection), options?.timeoutMs);
+          const result = await fn(connection);
+          console.log('After sleep:', performance.now());
+          callback(null, result);
+        } catch (error) {
+          console.log('Error in fn(connection)', error);
+          callback(error);
+        }
+      },
+      READ_CONNECTIONS
+    );
   }
 
   protected async openConnection(filenameOverride?: string): Promise<OPSQLiteConnection> {
@@ -149,31 +174,30 @@ export class OPSQLiteDBAdapter extends BaseObserver<DBAdapterListener> implement
     });
   }
 
+  async delay(msecs: number) {
+    return new Promise((resolve) => setTimeout(resolve, msecs));
+  }
+
+  currentDate() {
+    let today = new Date();
+    return today.toISOString();
+  }
+
   async readLock<T>(fn: (tx: OPSQLiteConnection) => Promise<T>, options?: DBLockOptions): Promise<T> {
     await this.initialized;
-    // TODO: Use async queues to handle multiple read connections
-    const sortedConnections = this.readConnections!.map((connection, index) => ({
-      lockKey: `${LockType.READ}-${index}`,
-      connection
-    })).sort((a, b) => {
-      const aBusy = this.locks.isBusy(a.lockKey);
-      const bBusy = this.locks.isBusy(b.lockKey);
-      // Sort by ones which are not busy
-      return aBusy > bBusy ? 1 : 0;
-    });
-
-    return new Promise(async (resolve, reject) => {
-      try {
-        await this.locks.acquire(
-          sortedConnections[0].lockKey,
-          async () => {
-            resolve(await fn(sortedConnections[0].connection));
-          },
-          { timeout: options?.timeoutMs }
-        );
-      } catch (ex) {
-        reject(ex);
-      }
+    console.log('Read lock');
+    return new Promise((resolve, reject) => {
+      this.readConnections!.forEach((connection, index) => {
+        this.readQueue.push({ connection, fn }, (err, result) => {
+          if (err) {
+            console.log('Rejecting q push', err);
+            reject(err);
+          }
+          console.log('Connection at', index);
+          console.log('Resolve q', result);
+          resolve(result);
+        });
+      });
     });
   }
 

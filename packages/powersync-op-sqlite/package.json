@@ -72,11 +72,13 @@
   },
   "dependencies": {
     "@powersync/common": "workspace:*",
+    "async": "^3.2.6",
     "async-lock": "^1.4.0"
   },
   "devDependencies": {
     "@op-engineering/op-sqlite": "^9.2.1",
     "@react-native/eslint-config": "^0.73.1",
+    "@types/async": "^3.2.24",
     "@types/async-lock": "^1.4.0",
     "@types/react": "^18.2.44",
     "del-cli": "^5.1.0",
